@@ -1,0 +1,57 @@
+data_dir = "/var/lib/vector"
+
+# ==========================
+# 链路 A: 采集 (Nginx -> Kafka)
+# ==========================
+
+[sources.nginx_file]
+type = "file"
+include = ["/var/log/nginx/access.log"]
+read_from = "beginning"
+
+[transforms.parse_json]
+type = "remap"
+inputs = ["nginx_file"]
+source = '''
+  . = parse_json!(.message)
+  del(.message)
+'''
+
+[sinks.write_to_kafka]
+type = "kafka"
+inputs = ["parse_json"]
+bootstrap_servers = "kafka:9092"
+topic = "nginx-access-logs"
+encoding.codec = "json"
+
+# ==========================
+# 链路 B: 入库 (Kafka -> ClickHouse)
+# ==========================
+
+# 1. 从 Kafka 读取
+[sources.read_from_kafka]
+type = "kafka"
+bootstrap_servers = "kafka:9092"
+group_id = "vector-clickhouse-consumer"
+topics = ["nginx-access-logs"]
+
+# 2. 解析 Kafka 里的 JSON
+[transforms.parse_kafka_json]
+type = "remap"
+inputs = ["read_from_kafka"]
+source = '''
+  . = parse_json!(.message)
+'''
+
+# 3. 写入 ClickHouse
+[sinks.write_to_clickhouse]
+type = "clickhouse"
+inputs = ["parse_kafka_json"]
+endpoint = "http://clickhouse:8123"
+database = "logs"
+table = "nginx_access"
+skip_unknown_fields = true
+
+auth.strategy = "basic"
+auth.user = "default"
+auth.password = "lxz,20031226"
